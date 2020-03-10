@@ -14,7 +14,7 @@ class RichSuggestion extends StatelessWidget {
       child: InkWell(
         child: Container(
           color:Colors.white,
-            margin: EdgeInsets.all(5),
+            margin: EdgeInsets.all(0),
             padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
             child: Row(
               children: <Widget>[
