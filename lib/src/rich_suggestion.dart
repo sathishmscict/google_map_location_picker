@@ -13,7 +13,7 @@ class RichSuggestion extends StatelessWidget {
     return Material(
       child: InkWell(
         child: Container(
-          colors:Colors.white,
+          color:Colors.white,
             margin: EdgeInsets.all(5),
             padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
             child: Row(
