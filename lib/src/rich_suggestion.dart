@@ -39,7 +39,7 @@ class RichSuggestion extends StatelessWidget {
         TextSpan(
           text: startText,
           style: TextStyle(
-            color: Colors.white,
+            color: Colors.black54,
             fontSize: 15,
             fontWeight: FontWeight.w300,
           ),
@@ -54,7 +54,7 @@ class RichSuggestion extends StatelessWidget {
       TextSpan(
         text: boldText,
         style: TextStyle(
-          color: Colors.white,
+          color: Colors.black,
           fontSize: 15,
           fontWeight: FontWeight.w500,
         ),
@@ -68,7 +68,7 @@ class RichSuggestion extends StatelessWidget {
     result.add(
       TextSpan(
         text: remainingText,
-        style: TextStyle(color: Colors.white, fontSize: 15),
+        style: TextStyle(color: Colors.black54, fontSize: 15),
       ),
     );
 
