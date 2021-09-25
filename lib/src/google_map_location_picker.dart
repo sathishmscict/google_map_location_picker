@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:google_map_location_picker/generated/i18n.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:google_map_location_picker/generated/l10n.dart';
 import 'package:google_map_location_picker/src/map.dart';
 import 'package:google_map_location_picker/src/providers/location_provider.dart';
 import 'package:google_map_location_picker/src/rich_suggestion.dart';
@@ -22,6 +24,7 @@ class LocationPicker extends StatefulWidget {
     this.apiKey, {
     Key key,
     this.initialCenter,
+    this.initialZoom,
     this.requiredGPS,
     this.myLocationButtonEnabled,
     this.layersButtonEnabled,
@@ -30,15 +33,20 @@ class LocationPicker extends StatefulWidget {
     this.appBarColor,
     this.searchBarBoxDecoration,
     this.hintText,
-    this.resultCardConfirmWidget,
+    this.resultCardConfirmIcon,
     this.resultCardAlignment,
     this.resultCardDecoration,
     this.resultCardPadding,
+    this.countries,
+    this.language,
+    this.desiredAccuracy,
   });
 
   final String apiKey;
 
   final LatLng initialCenter;
+  final double initialZoom;
+  final List<String> countries;
 
   final bool requiredGPS;
   final bool myLocationButtonEnabled;
@@ -50,10 +58,14 @@ class LocationPicker extends StatefulWidget {
   final Color appBarColor;
   final BoxDecoration searchBarBoxDecoration;
   final String hintText;
-  final Widget resultCardConfirmWidget;
+  final Widget resultCardConfirmIcon;
   final Alignment resultCardAlignment;
   final Decoration resultCardDecoration;
   final EdgeInsets resultCardPadding;
+
+  final String language;
+
+  final LocationAccuracy desiredAccuracy;
 
   @override
   LocationPickerState createState() => LocationPickerState();
@@ -142,17 +154,27 @@ class LocationPickerState extends State<LocationPicker> {
   /// Fetches the place autocomplete list with the query [place].
   void autoCompleteSearch(String place) {
     place = place.replaceAll(" ", "+");
+
+    final countries = widget.countries;
+
+    // Currently, you can use components to filter by up to 5 countries. from https://developers.google.com/places/web-service/autocomplete
+    String regionParam = countries?.isNotEmpty == true
+        ? "&components=country:${countries.sublist(0, min(countries.length, 5)).join('|country:')}"
+        : "";
+
     var endpoint =
         "https://maps.googleapis.com/maps/api/place/autocomplete/json?" +
             "key=${widget.apiKey}&" +
-            "input={$place}&sessiontoken=$sessionToken";
+            "input={$place}$regionParam&sessiontoken=$sessionToken&" +
+            "language=${widget.language}";
 
     if (locationResult != null) {
       endpoint += "&location=${locationResult.latLng.latitude}," +
           "${locationResult.latLng.longitude}";
     }
+
     LocationUtils.getAppHeaders()
-        .then((headers) => http.get(endpoint, headers: headers))
+        .then((headers) => http.get(Uri.parse(endpoint), headers: headers))
         .then((response) {
       if (response.statusCode == 200) {
         Map<String, dynamic> data = jsonDecode(response.body);
@@ -195,12 +217,13 @@ class LocationPickerState extends State<LocationPicker> {
   void decodeAndSelectPlace(String placeId) {
     clearOverlay();
 
-    String endpoint =
+    final endpoint =
         "https://maps.googleapis.com/maps/api/place/details/json?key=${widget.apiKey}" +
-            "&placeid=$placeId";
+            "&placeid=$placeId" +
+            '&language=${widget.language}';
 
     LocationUtils.getAppHeaders()
-        .then((headers) => http.get(endpoint, headers: headers))
+        .then((headers) => http.get(Uri.parse(endpoint), headers: headers))
         .then((response) {
       if (response.statusCode == 200) {
         Map<String, dynamic> location =
@@ -262,12 +285,15 @@ class LocationPickerState extends State<LocationPicker> {
 
   /// Fetches and updates the nearby places to the provided lat,lng
   void getNearbyPlaces(LatLng latLng) {
-    LocationUtils.getAppHeaders()
-        .then((headers) => http.get(
+    LocationUtils.getAppHeaders().then((headers) {
+      var endpoint =
           "https://maps.googleapis.com/maps/api/place/nearbysearch/json?" +
-            "key=${widget.apiKey}&" +
-            "location=${latLng.latitude},${latLng.longitude}&radius=150", headers: headers))
-        .then((response) {
+              "key=${widget.apiKey}&" +
+              "location=${latLng.latitude},${latLng.longitude}&radius=150" +
+              "&language=${widget.language}";
+
+      return http.get(Uri.parse(endpoint), headers: headers);
+    }).then((response) {
       if (response.statusCode == 200) {
         nearbyPlaces.clear();
         for (Map<String, dynamic> item
@@ -298,14 +324,20 @@ class LocationPickerState extends State<LocationPicker> {
   /// This method gets the human readable name of the location. Mostly appears
   /// to be the road name and the locality.
   Future reverseGeocodeLatLng(LatLng latLng) async {
-    var response = await http.get(
-        "https://maps.googleapis.com/maps/api/geocode/json?latlng=${latLng.latitude},${latLng.longitude}"
-        "&key=${widget.apiKey}", headers: await LocationUtils.getAppHeaders());
+    final endpoint =
+        "https://maps.googleapis.com/maps/api/geocode/json?latlng=${latLng.latitude},${latLng.longitude}" +
+            "&key=${widget.apiKey}" +
+            "&language=${widget.language}";
+
+    final response = await http.get(Uri.parse(endpoint),
+        headers: await LocationUtils.getAppHeaders());
 
     if (response.statusCode == 200) {
       Map<String, dynamic> responseJson = jsonDecode(response.body);
 
       String road;
+
+      String placeId = responseJson['results'][0]['place_id'];
 
       if (responseJson['status'] == 'REQUEST_DENIED') {
         road = 'REQUEST DENIED = please see log for more details';
@@ -322,6 +354,7 @@ class LocationPickerState extends State<LocationPicker> {
         locationResult = LocationResult();
         locationResult.address = road;
         locationResult.latLng = latLng;
+        locationResult.placeId = placeId;
       });
     }
   }
@@ -369,24 +402,29 @@ class LocationPickerState extends State<LocationPicker> {
               (input) => searchPlace(input),
               key: searchInputKey,
               boxDecoration: widget.searchBarBoxDecoration,
+              hintText: widget.hintText,
             ),
           ),
           body: MapPicker(
             widget.apiKey,
             initialCenter: widget.initialCenter,
+            initialZoom: widget.initialZoom,
             requiredGPS: widget.requiredGPS,
             myLocationButtonEnabled: widget.myLocationButtonEnabled,
             layersButtonEnabled: widget.layersButtonEnabled,
-            automaticallyAnimateToCurrentLocation: widget.automaticallyAnimateToCurrentLocation,
+            automaticallyAnimateToCurrentLocation:
+                widget.automaticallyAnimateToCurrentLocation,
             mapStylePath: widget.mapStylePath,
             appBarColor: widget.appBarColor,
             searchBarBoxDecoration: widget.searchBarBoxDecoration,
             hintText: widget.hintText,
-            resultCardConfirmWidget: widget.resultCardConfirmWidget,
+            resultCardConfirmIcon: widget.resultCardConfirmIcon,
             resultCardAlignment: widget.resultCardAlignment,
             resultCardDecoration: widget.resultCardDecoration,
             resultCardPadding: widget.resultCardPadding,
             key: mapKey,
+            language: widget.language,
+            desiredAccuracy: widget.desiredAccuracy,
           ),
         );
       }),
@@ -408,7 +446,9 @@ Future<LocationResult> showLocationPicker(
   BuildContext context,
   String apiKey, {
   LatLng initialCenter = const LatLng(45.521563, -122.677433),
-  bool requiredGPS = true,
+  double initialZoom = 16,
+  bool requiredGPS = false,
+  List<String> countries,
   bool myLocationButtonEnabled = false,
   bool layersButtonEnabled = false,
   bool automaticallyAnimateToCurrentLocation = true,
@@ -416,29 +456,37 @@ Future<LocationResult> showLocationPicker(
   Color appBarColor = Colors.transparent,
   BoxDecoration searchBarBoxDecoration,
   String hintText,
-  Widget resultCardConfirmWidget,
+  Widget resultCardConfirmIcon,
   AlignmentGeometry resultCardAlignment,
   EdgeInsetsGeometry resultCardPadding,
   Decoration resultCardDecoration,
+  String language = 'en',
+  LocationAccuracy desiredAccuracy = LocationAccuracy.best,
 }) async {
   final results = await Navigator.of(context).push(
     MaterialPageRoute<dynamic>(
       builder: (BuildContext context) {
+        // print('[LocationPicker] [countries] ${countries.join(', ')}');
         return LocationPicker(
           apiKey,
           initialCenter: initialCenter,
+          initialZoom: initialZoom,
           requiredGPS: requiredGPS,
           myLocationButtonEnabled: myLocationButtonEnabled,
           layersButtonEnabled: layersButtonEnabled,
-          automaticallyAnimateToCurrentLocation: automaticallyAnimateToCurrentLocation,
+          automaticallyAnimateToCurrentLocation:
+              automaticallyAnimateToCurrentLocation,
           mapStylePath: mapStylePath,
           appBarColor: appBarColor,
           hintText: hintText,
           searchBarBoxDecoration: searchBarBoxDecoration,
-          resultCardConfirmWidget: resultCardConfirmWidget,
+          resultCardConfirmIcon: resultCardConfirmIcon,
           resultCardAlignment: resultCardAlignment,
           resultCardPadding: resultCardPadding,
           resultCardDecoration: resultCardDecoration,
+          countries: countries,
+          language: language,
+          desiredAccuracy: desiredAccuracy,
         );
       },
     ),
